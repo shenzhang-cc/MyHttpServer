@@ -2,10 +2,20 @@
 #include <netinet/in.h>
 #include <memory.h>
 #include <unistd.h>
+#include "util.h"
+
+#include "Epoll.h"
+#include "ThreadPool.h"
 
 using namespace std;
 
 static const int LISTENQ = 1024;
+static const int MAXEVENTS =  5000;
+
+const int THREADPOOL_THREAD_NUM = 4;
+const int QUEUE_SIZE = 65535;
+
+const int PORT = 8888;
 
 int socket_bind_listen(int port) {
     if (port < 1024 || port > 65535)
@@ -38,6 +48,40 @@ int socket_bind_listen(int port) {
 
 
 int main() {
+    handle_for_sigpipe();
+    if (Epoll::epoll_init(MAXEVENTS, LISTENQ) < 0)
+    {
+        perror("Epoll init error");
+        return 1;
+    }
 
+    if (ThreadPool::threadpool_create(THREADPOOL_THREAD_NUM, QUEUE_SIZE) != 0)
+    {
+        perror("Threadpool create failed");
+        return 1;
+    }
+    int listen_fd = socket_bind_listen(PORT);
+    if (listen_fd < 0)
+    {
+        perror("sock bind failed");
+        return 1;
+    }
+    if (setSocketNonBlocking(listen_fd) < 0)
+    {
+        perror("set socket non block failed");
+        return 1;
+    }
+    shared_ptr<RequestData> request (new RequestData());
+    request->setfd();
+
+    if (Epoll::epoll_add(listen_fd, request, EPOLLIN | EPOLLET) < 0)
+    {
+        perror("epoll add failed");
+        return 1;
+    }
+    while (true)
+    {
+        Epoll::my_epoll_wait(listen_fd, MAXEVENTS, -1);
+    }
     return 0;
 }
